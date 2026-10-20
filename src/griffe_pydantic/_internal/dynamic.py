@@ -27,6 +27,8 @@ from griffe import (
     Attribute,
     Class,
     Docstring,
+    ExprCall,
+    ExprName,
     Function,
     Kind,
     get_logger,
@@ -55,6 +57,9 @@ def _process_attribute(obj: FieldInfo, attr: Attribute, cls: Class, *, processed
 
     attr.labels = {"pydantic-field"}
     attr.value = None if obj.default is PydanticUndefined else repr(obj.default)
+    if obj.default_factory is not None:
+        factory = getattr(obj.default_factory, "__name__", type(obj.default_factory).__name__)
+        attr.value = ExprCall(function=ExprName(factory, parent=cls), arguments=[])
 
     # Runtime annotations must become Griffe expressions before templates can render them.
     annotation = formatannotation(obj.annotation)
@@ -115,3 +120,5 @@ def _process_class(obj: type[BaseModel], cls: Class, *, processed: set[str], sch
     for member in cls.all_members.values():
         if member.kind is Kind.FUNCTION:
             _process_function(getattr(obj, member.name), member, cls, processed=processed)  # ty: ignore[invalid-argument-type]
+
+    common._set_model_signature(cls)

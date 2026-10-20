@@ -228,6 +228,13 @@ def _process_attribute(attr: Attribute, cls: Class, *, processed: set[str]) -> N
     attr.labels.discard("instance-attribute")
 
     attr.value = kwargs.get("default")
+    if str(attr.value) == "...":
+        attr.value = None
+    if (factory := kwargs.get("default_factory")) is not None and str(factory) != "None":
+        attr.value = ExprCall(
+            function=factory if isinstance(factory, Expr) else ExprName(factory, parent=cls),
+            arguments=[],
+        )
     constraints = {
         kwarg: value
         for kwarg, value in kwargs.items()
@@ -327,6 +334,8 @@ def _process_class(
             _process_function(member, cls, processed=processed)  # ty: ignore[invalid-argument-type]
         elif kind is Kind.CLASS:
             _process_class(member, processed=processed, declarations=declarations, schema=schema)  # ty: ignore[invalid-argument-type]
+
+    common._set_model_signature(cls)
 
 
 def _process_module(

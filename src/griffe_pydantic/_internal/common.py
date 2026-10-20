@@ -19,15 +19,16 @@
 from __future__ import annotations
 
 import json
+from contextlib import suppress
 from functools import partial
 from typing import TYPE_CHECKING
 
-from griffe import Kind
+from griffe import Alias, AliasResolutionError, Function, Kind, Parameter, ParameterKind, Parameters
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from griffe import Attribute, Class, Function
+    from griffe import Attribute, Class
     from pydantic import BaseModel
 
 _self_namespace = "griffe_pydantic"
@@ -87,6 +88,66 @@ def _process_class(cls: Class) -> None:
     cls.extra[_self_namespace]["fields"] = partial(_model_fields, cls)
     cls.extra[_self_namespace]["validators"] = partial(_model_validators, cls)
     cls.extra[_mkdocstrings_namespace]["template"] = "pydantic_model.html.jinja"
+
+
+def _set_model_signature(cls: Class) -> None:
+    """Expose model fields to constructor-dependent docstring parsers."""
+    fields = _model_fields(cls)
+    init = cls.members.get("__init__")
+    if not isinstance(init, Function):
+        with suppress(KeyError, AliasResolutionError):
+            inherited = cls.all_members.get("__init__")
+            if isinstance(inherited, Alias):
+                inherited = inherited.final_target
+            if isinstance(inherited, Function) and (
+                inherited.lineno or "init_parameter_names" in inherited.extra[_self_namespace]
+            ):
+                init = inherited
+
+    original_names = None
+    if isinstance(init, Function):
+        # Keep the source signature so subclasses can apply their own field defaults.
+        original_names = init.extra[_self_namespace].setdefault(
+            "init_parameter_names",
+            tuple(param.name for param in init.parameters),
+        )
+        parameters = [param for param in init.parameters if param.name in original_names]
+        # An explicit constructor without **kwargs cannot accept additional model fields.
+        if not any(param.kind is ParameterKind.var_keyword for param in parameters):
+            return
+    else:
+        self_name = "self"
+        while self_name in fields:
+            self_name = f"_{self_name}"
+        parameters = [Parameter(self_name, kind=ParameterKind.positional_or_keyword)]
+
+    names = {param.name for param in parameters}
+    variadic = [param for param in parameters if param.kind is ParameterKind.var_keyword]
+    parameters = [param for param in parameters if param.kind is not ParameterKind.var_keyword]
+    parameters.extend(
+        Parameter(
+            name,
+            annotation=field.annotation,
+            default=field.value,
+            kind=ParameterKind.keyword_only,
+            docstring=field.docstring,
+        )
+        for name, field in fields.items()
+        if name not in names
+    )
+    if not variadic and cls.extra[_self_namespace].get("config", {}).get("extra") == "allow":
+        name = "kwargs"
+        while name in fields or name in names:
+            name += "_"
+        variadic.append(Parameter(name, kind=ParameterKind.var_keyword))
+    parameters.extend(variadic)
+
+    if not isinstance(init, Function) or init.parent is not cls:
+        init = Function("__init__", lineno=0, endlineno=0, returns="None")
+        cls.set_member("__init__", init)
+    if original_names is not None:
+        init.extra[_self_namespace]["init_parameter_names"] = original_names
+    init.parameters = Parameters(*parameters)
 
 
 def _process_function(func: Function, cls: Class, fields: Sequence[str]) -> None:
