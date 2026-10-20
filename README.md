@@ -54,6 +54,12 @@ plugins:
 
 See [MkDocs usage in Griffe's documentation](https://mkdocstrings.github.io/griffe/extensions/#in-mkdocs).
 
+### Pydantic dataclasses
+
+Pydantic dataclasses retain ordinary class rendering, with constructor parameters, types, and defaults.
+Dataclasses configured with `extra="allow"` also show `**kwargs` when the configuration can be resolved.
+With mkdocstrings, enable `merge_init_into_class: true` to display the constructor on the class.
+
 ## Sponsors
 
 <!-- sponsors-start -->

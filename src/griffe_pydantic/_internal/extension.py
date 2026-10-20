@@ -31,10 +31,10 @@ from griffe import (
     safe_get_expression,
 )
 
-from griffe_pydantic._internal import dynamic, static
+from griffe_pydantic._internal import dataclasses, dynamic, static
 
 if TYPE_CHECKING:
-    from griffe import Attribute, Inspector, ObjectNode, Visitor
+    from griffe import Attribute, GriffeLoader, Inspector, ObjectNode, Visitor
 
 
 _logger = get_logger("griffe_pydantic")
@@ -53,14 +53,19 @@ class PydanticExtension(Extension):
         self._schema = schema
         self._processed: set[str] = set()
         self._recorded: list[tuple[ObjectNode, Class]] = []
+        self._dataclasses: list[tuple[ObjectNode, Class]] = []
         self._attribute_declarations: dict[str, Attribute | None] = {}
 
-    def on_package(self, *, pkg: Module, **kwargs: Any) -> None:  # noqa: ARG002
+    def on_package(self, *, pkg: Module, loader: GriffeLoader | None = None, **kwargs: Any) -> None:  # noqa: ARG002
         """Detect models once the whole package is loaded."""
         # Process bases first so inherited fields can remain aliases to their definitions.
         for node, cls in sorted(self._recorded, key=lambda item: len(item[0].obj.__mro__)):
             self._processed.add(cls.canonical_path)
             dynamic._process_class(node.obj, cls, processed=self._processed, schema=self._schema)
+
+        for node, cls in self._dataclasses:
+            dataclasses._process_dynamic(node.obj, cls)
+        dataclasses._process_module(pkg, loader=loader, declarations=self._attribute_declarations)
 
         static._process_module(
             pkg,
@@ -118,9 +123,12 @@ class PydanticExtension(Extension):
 
         try:
             import pydantic  # noqa: PLC0415
+            from pydantic.dataclasses import is_pydantic_dataclass  # noqa: PLC0415
         except ImportError:
             _logger.warning("could not import pydantic - models will not be detected")
             return
 
         if issubclass(node.obj, pydantic.BaseModel):
             self._recorded.append((node, cls))
+        elif is_pydantic_dataclass(node.obj):
+            self._dataclasses.append((node, cls))
